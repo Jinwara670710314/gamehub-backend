@@ -1,0 +1,15 @@
+
+# Environment variables
+.env
+.env.*
+
+# Allow example environment file
+!.env.example
+
+# Go build files
+*.exe
+*.out
+*.test
+
+# IDE
+.vscode/
