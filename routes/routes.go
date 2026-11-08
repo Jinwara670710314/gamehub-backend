@@ -1,3 +1,4 @@
+
 package routes
 
 import (
@@ -57,7 +58,7 @@ func Setup(db *sql.DB) http.Handler {
 	mux.HandleFunc("GET /api/games", gameHandler.GetGames)
 	mux.HandleFunc("GET /api/games/{id}", gameHandler.GetGameByID)
 
-	// Game Detail: ข้อมูลเกม + คะแนน + รีวิว
+	// Game Detail
 	mux.HandleFunc("GET /api/games/{id}/detail",
 		gameDetailHandler.GetGameDetail,
 	)
@@ -88,10 +89,52 @@ func Setup(db *sql.DB) http.Handler {
 		middleware.Auth(http.HandlerFunc(reviewHandler.DeleteReview)),
 	)
 
+	// Game Rating
+	// ผู้ใช้ต้อง Login ก่อนจึงจะให้คะแนนเกมได้
+	mux.Handle("POST /api/games/{id}/rating",
+		middleware.Auth(http.HandlerFunc(ratingHandler.SubmitRating)),
+	)
+
 	// Rating Summary
 	mux.HandleFunc("GET /api/games/{id}/rating-summary",
 		ratingHandler.GetRatingSummary,
 	)
 
-	return mux
+	// Enable CORS
+	return corsMiddleware(mux)
+}
+
+// CORS Middleware
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		allowedOrigins := map[string]bool{
+			"http://127.0.0.1:3000": true,
+			"http://localhost:3000": true,
+		}
+
+		if allowedOrigins[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
+		w.Header().Set(
+			"Access-Control-Allow-Methods",
+			"GET, POST, PUT, PATCH, DELETE, OPTIONS",
+		)
+
+		w.Header().Set(
+			"Access-Control-Allow-Headers",
+			"Content-Type, Authorization",
+		)
+
+		// Handle browser preflight request
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
