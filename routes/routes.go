@@ -66,23 +66,42 @@ func Setup(db *sql.DB) http.Handler {
 	// Admin Game APIs
 	mux.Handle("GET /api/admin/games",
 		middleware.Auth(
-			middleware.Admin(
+			middleware.Admin(db)(
 				http.HandlerFunc(gameHandler.GetAdminGames),
 			),
 		),
 	)
 
 	mux.Handle("POST /api/games",
-		middleware.Auth(middleware.Admin(http.HandlerFunc(gameHandler.CreateGame))),
+		middleware.Auth(
+			middleware.Admin(db)(
+				http.HandlerFunc(gameHandler.CreateGame),
+			),
+		),
 	)
+
 	mux.Handle("PUT /api/games/{id}",
-		middleware.Auth(middleware.Admin(http.HandlerFunc(gameHandler.UpdateGame))),
+		middleware.Auth(
+			middleware.Admin(db)(
+				http.HandlerFunc(gameHandler.UpdateGame),
+			),
+		),
 	)
+
 	mux.Handle("DELETE /api/games/{id}",
-		middleware.Auth(middleware.Admin(http.HandlerFunc(gameHandler.DeleteGame))),
+		middleware.Auth(
+			middleware.Admin(db)(
+				http.HandlerFunc(gameHandler.DeleteGame),
+			),
+		),
 	)
+
 	mux.Handle("PATCH /api/games/{id}/restore",
-		middleware.Auth(middleware.Admin(http.HandlerFunc(gameHandler.RestoreGame))),
+		middleware.Auth(
+			middleware.Admin(db)(
+				http.HandlerFunc(gameHandler.RestoreGame),
+			),
+		),
 	)
 
 	// Game Reviews
@@ -98,7 +117,6 @@ func Setup(db *sql.DB) http.Handler {
 	)
 
 	// Game Rating
-	// ผู้ใช้ต้อง Login ก่อนจึงจะให้คะแนนเกมได้
 	mux.Handle("POST /api/games/{id}/rating",
 		middleware.Auth(http.HandlerFunc(ratingHandler.SubmitRating)),
 	)
