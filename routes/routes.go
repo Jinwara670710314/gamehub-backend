@@ -64,6 +64,14 @@ func Setup(db *sql.DB) http.Handler {
 	)
 
 	// Admin Game APIs
+	mux.Handle("GET /api/admin/games",
+		middleware.Auth(
+			middleware.Admin(
+				http.HandlerFunc(gameHandler.GetAdminGames),
+			),
+		),
+	)
+
 	mux.Handle("POST /api/games",
 		middleware.Auth(middleware.Admin(http.HandlerFunc(gameHandler.CreateGame))),
 	)
