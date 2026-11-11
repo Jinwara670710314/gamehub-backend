@@ -4,6 +4,8 @@ package routes
 import (
 	"database/sql"
 	"net/http"
+	"os"
+	"strings"
 
 	"gamehub-backend/handlers"
 	"gamehub-backend/middleware"
@@ -161,9 +163,24 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		allowedOrigins := map[string]bool{
-			"http://127.0.0.1:3000": true,
-			"http://localhost:3000": true,
+		// อ่านรายการ Origin ที่อนุญาตจาก Environment Variable
+		allowedOrigins := make(map[string]bool)
+
+		originsEnv := os.Getenv("ALLOWED_ORIGINS")
+
+		if originsEnv == "" {
+			// ค่าเริ่มต้นสำหรับการทดสอบบนเครื่องตัวเอง
+			allowedOrigins["http://127.0.0.1:3000"] = true
+			allowedOrigins["http://localhost:3000"] = true
+		} else {
+			// รองรับหลาย Origin โดยคั่นด้วยเครื่องหมายจุลภาค
+			for _, allowedOrigin := range strings.Split(originsEnv, ",") {
+				allowedOrigin = strings.TrimSpace(allowedOrigin)
+
+				if allowedOrigin != "" {
+					allowedOrigins[allowedOrigin] = true
+				}
+			}
 		}
 
 		if allowedOrigins[origin] {
