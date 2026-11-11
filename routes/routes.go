@@ -152,8 +152,8 @@ func Setup(db *sql.DB) http.Handler {
 		ratingHandler.GetRatingSummary,
 	)
 
-	// Enable CORS
-	return corsMiddleware(mux)
+	// เปิดใช้งาน CORS และ Logging
+	return middleware.Logging(corsMiddleware(mux))
 }
 
 // CORS Middleware

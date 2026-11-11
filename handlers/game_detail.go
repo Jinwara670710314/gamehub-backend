@@ -1,3 +1,4 @@
+
 package handlers
 
 import (
@@ -33,10 +34,10 @@ func (h *GameDetailHandler) GetGameDetail(w http.ResponseWriter, r *http.Request
 	var year sql.NullInt64
 	var image sql.NullString
 	var description sql.NullString
-	var rawgID sql.NullInt64
+	var igdbID sql.NullInt64
 
 	err = h.DB.QueryRow(`
-		SELECT id, name, genre, year, image, description, rawg_id
+		SELECT id, name, genre, year, image, description, igdb_id
 		FROM games
 		WHERE id = $1 AND is_deleted = FALSE
 	`, gameID).Scan(
@@ -46,7 +47,7 @@ func (h *GameDetailHandler) GetGameDetail(w http.ResponseWriter, r *http.Request
 		&year,
 		&image,
 		&description,
-		&rawgID,
+		&igdbID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -73,8 +74,8 @@ func (h *GameDetailHandler) GetGameDetail(w http.ResponseWriter, r *http.Request
 	if description.Valid {
 		game.Description = &description.String
 	}
-	if rawgID.Valid {
-		game.RAWGID = &rawgID.Int64
+	if igdbID.Valid {
+		game.IGDBID = &igdbID.Int64
 	}
 
 	// 2. ดึงคะแนนเฉลี่ยและจำนวนผู้ให้คะแนน

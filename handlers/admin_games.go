@@ -18,7 +18,7 @@ type AdminGame struct {
 // API สำหรับ Admin ดูเกมทั้งหมด รวมถึงเกมที่ถูกลบแล้ว
 func (h *GameHandler) GetAdminGames(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT id, name, genre, year, image, description, rawg_id, is_deleted
+		SELECT id, name, genre, year, image, description, igdb_id, is_deleted
 		FROM public.games
 		ORDER BY id ASC
 	`)
@@ -34,7 +34,7 @@ func (h *GameHandler) GetAdminGames(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var game AdminGame
 		var genre, image, description sql.NullString
-		var year, rawgID sql.NullInt64
+		var year, igdbID sql.NullInt64
 
 		err := rows.Scan(
 			&game.ID,
@@ -43,7 +43,7 @@ func (h *GameHandler) GetAdminGames(w http.ResponseWriter, r *http.Request) {
 			&year,
 			&image,
 			&description,
-			&rawgID,
+			&igdbID,
 			&game.IsDeleted,
 		)
 
@@ -69,8 +69,8 @@ func (h *GameHandler) GetAdminGames(w http.ResponseWriter, r *http.Request) {
 			game.Description = &description.String
 		}
 
-		if rawgID.Valid {
-			game.RAWGID = &rawgID.Int64
+		if igdbID.Valid {
+			game.IGDBID = &igdbID.Int64
 		}
 
 		games = append(games, game)

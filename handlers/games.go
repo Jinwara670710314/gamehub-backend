@@ -1,3 +1,4 @@
+
 package handlers
 
 import (
@@ -55,7 +56,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT id, name, genre, year, image, description, rawg_id
+		SELECT id, name, genre, year, image, description, igdb_id
 		FROM public.games
 		WHERE is_deleted = FALSE
 		AND ($1 = '' OR name ILIKE '%' || $1 || '%')
@@ -74,7 +75,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var game models.Game
 		var genre, image, description sql.NullString
-		var year, rawgID sql.NullInt64
+		var year, igdbID sql.NullInt64
 
 		err := rows.Scan(
 			&game.ID,
@@ -83,7 +84,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			&year,
 			&image,
 			&description,
-			&rawgID,
+			&igdbID,
 		)
 		if err != nil {
 			http.Error(w, "เกิดข้อผิดพลาดในการอ่านข้อมูลเกม", http.StatusInternalServerError)
@@ -103,8 +104,8 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 		if description.Valid {
 			game.Description = &description.String
 		}
-		if rawgID.Valid {
-			game.RAWGID = &rawgID.Int64
+		if igdbID.Valid {
+			game.IGDBID = &igdbID.Int64
 		}
 
 		games = append(games, game)
@@ -155,10 +156,10 @@ func (h *GameHandler) GetGameByID(w http.ResponseWriter, r *http.Request) {
 
 	var game models.Game
 	var genre, image, description sql.NullString
-	var year, rawgID sql.NullInt64
+	var year, igdbID sql.NullInt64
 
 	err = h.DB.QueryRowContext(r.Context(), `
-		SELECT id, name, genre, year, image, description, rawg_id
+		SELECT id, name, genre, year, image, description, igdb_id
 		FROM public.games
 		WHERE id = $1 AND is_deleted = FALSE
 	`, id).Scan(
@@ -168,7 +169,7 @@ func (h *GameHandler) GetGameByID(w http.ResponseWriter, r *http.Request) {
 		&year,
 		&image,
 		&description,
-		&rawgID,
+		&igdbID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -194,8 +195,8 @@ func (h *GameHandler) GetGameByID(w http.ResponseWriter, r *http.Request) {
 	if description.Valid {
 		game.Description = &description.String
 	}
-	if rawgID.Valid {
-		game.RAWGID = &rawgID.Int64
+	if igdbID.Valid {
+		game.IGDBID = &igdbID.Int64
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -222,21 +223,21 @@ func (h *GameHandler) CreateGame(w http.ResponseWriter, r *http.Request) {
 
 	var game models.Game
 	var genre, image, description sql.NullString
-	var year, rawgID sql.NullInt64
+	var year, igdbID sql.NullInt64
 
 	err := h.DB.QueryRowContext(r.Context(), `
 		INSERT INTO public.games
-			(name, genre, year, image, description, rawg_id, is_deleted)
+			(name, genre, year, image, description, igdb_id, is_deleted)
 		VALUES
 			($1, $2, $3, $4, $5, $6, FALSE)
-		RETURNING id, name, genre, year, image, description, rawg_id
+		RETURNING id, name, genre, year, image, description, igdb_id
 	`,
 		input.Name,
 		input.Genre,
 		input.Year,
 		input.Image,
 		input.Description,
-		input.RAWGID,
+		input.IGDBID,
 	).Scan(
 		&game.ID,
 		&game.Name,
@@ -244,7 +245,7 @@ func (h *GameHandler) CreateGame(w http.ResponseWriter, r *http.Request) {
 		&year,
 		&image,
 		&description,
-		&rawgID,
+		&igdbID,
 	)
 
 	if err != nil {
@@ -266,8 +267,8 @@ func (h *GameHandler) CreateGame(w http.ResponseWriter, r *http.Request) {
 	if description.Valid {
 		game.Description = &description.String
 	}
-	if rawgID.Valid {
-		game.RAWGID = &rawgID.Int64
+	if igdbID.Valid {
+		game.IGDBID = &igdbID.Int64
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -303,7 +304,7 @@ func (h *GameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) {
 
 	var game models.Game
 	var genre, image, description sql.NullString
-	var year, rawgID sql.NullInt64
+	var year, igdbID sql.NullInt64
 
 	err = h.DB.QueryRowContext(r.Context(), `
 		UPDATE public.games
@@ -313,17 +314,17 @@ func (h *GameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) {
 			year = $3,
 			image = $4,
 			description = $5,
-			rawg_id = $6,
+			igdb_id = $6,
 			updated_at = NOW()
 		WHERE id = $7 AND is_deleted = FALSE
-		RETURNING id, name, genre, year, image, description, rawg_id
+		RETURNING id, name, genre, year, image, description, igdb_id
 	`,
 		input.Name,
 		input.Genre,
 		input.Year,
 		input.Image,
 		input.Description,
-		input.RAWGID,
+		input.IGDBID,
 		id,
 	).Scan(
 		&game.ID,
@@ -332,7 +333,7 @@ func (h *GameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) {
 		&year,
 		&image,
 		&description,
-		&rawgID,
+		&igdbID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -359,8 +360,8 @@ func (h *GameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) {
 	if description.Valid {
 		game.Description = &description.String
 	}
-	if rawgID.Valid {
-		game.RAWGID = &rawgID.Int64
+	if igdbID.Valid {
+		game.IGDBID = &igdbID.Int64
 	}
 
 	w.Header().Set("Content-Type", "application/json")
