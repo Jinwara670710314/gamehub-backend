@@ -50,7 +50,6 @@ func Auth(next http.Handler) http.Handler {
 		}
 
 		tokenString := parts[1]
-
 		secret := os.Getenv("JWT_SECRET")
 
 		if secret == "" {
@@ -86,6 +85,47 @@ func Auth(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// ตรวจสอบว่าบัญชีผู้ใช้ยัง Active อยู่หรือไม่
+// ต้องใช้ร่วมกับ Auth Middleware
+func Active(db *sql.DB) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+			claims, ok := GetUser(r)
+
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "กรุณาเข้าสู่ระบบก่อน")
+				return
+			}
+
+			var status string
+
+			err := db.QueryRowContext(r.Context(), `
+				SELECT status
+				FROM public.users
+				WHERE id = $1
+			`, claims.UserID).Scan(&status)
+
+			if err != nil {
+				if err == sql.ErrNoRows {
+					writeError(w, http.StatusUnauthorized, "ไม่พบบัญชีผู้ใช้")
+					return
+				}
+
+				writeError(w, http.StatusInternalServerError, "ไม่สามารถตรวจสอบสถานะบัญชีได้")
+				return
+			}
+
+			if status != "active" {
+				writeError(w, http.StatusForbidden, "บัญชีนี้ถูกระงับการใช้งาน")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // ตรวจสอบสิทธิ์ Admin จากข้อมูลล่าสุดใน Database

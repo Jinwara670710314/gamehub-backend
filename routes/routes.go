@@ -19,6 +19,14 @@ func Setup(db *sql.DB) http.Handler {
 	reviewHandler := &handlers.ReviewHandler{DB: db}
 	ratingHandler := &handlers.RatingHandler{DB: db}
 	gameDetailHandler := &handlers.GameDetailHandler{DB: db}
+	memberHandler := &handlers.MemberHandler{DB: db}
+
+	// ตรวจสอบ Token และสถานะบัญชีผู้ใช้
+	authActive := func(handler http.Handler) http.Handler {
+		return middleware.Auth(
+			middleware.Active(db)(handler),
+		)
+	}
 
 	// Health Check
 	mux.HandleFunc("/api/health", gameHandler.HealthCheck)
@@ -29,29 +37,29 @@ func Setup(db *sql.DB) http.Handler {
 
 	// User Profile
 	mux.Handle("GET /api/me",
-		middleware.Auth(http.HandlerFunc(profileHandler.GetMe)),
+		authActive(http.HandlerFunc(profileHandler.GetMe)),
 	)
 	mux.Handle("PUT /api/me",
-		middleware.Auth(http.HandlerFunc(profileHandler.UpdateMe)),
+		authActive(http.HandlerFunc(profileHandler.UpdateMe)),
 	)
 
 	// Change Password
 	mux.Handle("POST /api/change-password",
-		middleware.Auth(http.HandlerFunc(authHandler.ChangePassword)),
+		authActive(http.HandlerFunc(authHandler.ChangePassword)),
 	)
 
 	// User Game Library
 	mux.Handle("POST /api/library",
-		middleware.Auth(http.HandlerFunc(libraryHandler.AddGame)),
+		authActive(http.HandlerFunc(libraryHandler.AddGame)),
 	)
 	mux.Handle("GET /api/library",
-		middleware.Auth(http.HandlerFunc(libraryHandler.GetLibrary)),
+		authActive(http.HandlerFunc(libraryHandler.GetLibrary)),
 	)
 	mux.Handle("PUT /api/library/{id}",
-		middleware.Auth(http.HandlerFunc(libraryHandler.UpdateGameStatus)),
+		authActive(http.HandlerFunc(libraryHandler.UpdateGameStatus)),
 	)
 	mux.Handle("DELETE /api/library/{id}",
-		middleware.Auth(http.HandlerFunc(libraryHandler.RemoveGame)),
+		authActive(http.HandlerFunc(libraryHandler.RemoveGame)),
 	)
 
 	// Public Game APIs
@@ -104,21 +112,39 @@ func Setup(db *sql.DB) http.Handler {
 		),
 	)
 
+	// Admin Member APIs
+	mux.Handle("GET /api/admin/members",
+		middleware.Auth(
+			middleware.Admin(db)(
+				http.HandlerFunc(memberHandler.GetMembers),
+			),
+		),
+	)
+
+	mux.Handle("PATCH /api/admin/members/{id}/status",
+		middleware.Auth(
+			middleware.Admin(db)(
+				http.HandlerFunc(memberHandler.UpdateMemberStatus),
+			),
+		),
+	)
+
 	// Game Reviews
 	mux.Handle("POST /api/games/{id}/reviews",
-		middleware.Auth(http.HandlerFunc(reviewHandler.CreateReview)),
+		authActive(http.HandlerFunc(reviewHandler.CreateReview)),
 	)
 	mux.HandleFunc("GET /api/games/{id}/reviews", reviewHandler.GetReviews)
+
 	mux.Handle("PUT /api/reviews/{id}",
-		middleware.Auth(http.HandlerFunc(reviewHandler.UpdateReview)),
+		authActive(http.HandlerFunc(reviewHandler.UpdateReview)),
 	)
 	mux.Handle("DELETE /api/reviews/{id}",
-		middleware.Auth(http.HandlerFunc(reviewHandler.DeleteReview)),
+		authActive(http.HandlerFunc(reviewHandler.DeleteReview)),
 	)
 
 	// Game Rating
 	mux.Handle("POST /api/games/{id}/rating",
-		middleware.Auth(http.HandlerFunc(ratingHandler.SubmitRating)),
+		authActive(http.HandlerFunc(ratingHandler.SubmitRating)),
 	)
 
 	// Rating Summary
