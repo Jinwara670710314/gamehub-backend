@@ -1,4 +1,3 @@
-
 package services
 
 import (
@@ -31,12 +30,12 @@ type IGDBClient struct {
 
 // IGDBGame ข้อมูลเกมที่ได้รับจาก IGDB
 type IGDBGame struct {
-	ID              int64       `json:"id"`
-	Name            string      `json:"name"`
-	FirstReleaseDate int64      `json:"first_release_date"`
-	Summary         string      `json:"summary"`
-	Cover           *IGDBCover  `json:"cover"`
-	Genres          []IGDBGenre `json:"genres"`
+	ID               int64       `json:"id"`
+	Name             string      `json:"name"`
+	FirstReleaseDate int64       `json:"first_release_date"`
+	Summary          string      `json:"summary"`
+	Cover            *IGDBCover  `json:"cover"`
+	Genres           []IGDBGenre `json:"genres"`
 }
 
 type IGDBCover struct {

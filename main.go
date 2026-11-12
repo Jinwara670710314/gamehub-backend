@@ -1,10 +1,10 @@
-
 package main
 
 import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"gamehub-backend/database"
 	"gamehub-backend/routes"
@@ -16,6 +16,17 @@ func main() {
 	// อ่านไฟล์ .env
 	if err := godotenv.Load(); err != nil {
 		log.Println("ไม่พบไฟล์ .env")
+	}
+
+	// ตรวจสอบ JWT_SECRET
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	if strings.TrimSpace(jwtSecret) == "" {
+		log.Fatal("ไม่พบ JWT_SECRET")
+	}
+
+	if len(jwtSecret) < 32 {
+		log.Fatal("JWT_SECRET ต้องมีความยาวอย่างน้อย 32 bytes")
 	}
 
 	// อ่าน DATABASE_URL

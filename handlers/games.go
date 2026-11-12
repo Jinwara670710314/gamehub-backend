@@ -1,4 +1,3 @@
-
 package handlers
 
 import (
@@ -26,8 +25,8 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed < 1 || parsed > 200 {
-    	http.Error(w, "limit ต้องอยู่ระหว่าง 1 ถึง 200", http.StatusBadRequest)
-    	return
+			http.Error(w, "limit ต้องอยู่ระหว่าง 1 ถึง 200", http.StatusBadRequest)
+			return
 		}
 		limit = parsed
 	}

@@ -1,11 +1,8 @@
-
 package routes
 
 import (
 	"database/sql"
 	"net/http"
-	"os"
-	"strings"
 
 	"gamehub-backend/handlers"
 	"gamehub-backend/middleware"
@@ -155,55 +152,5 @@ func Setup(db *sql.DB) http.Handler {
 	)
 
 	// เปิดใช้งาน CORS และ Logging
-	return middleware.Logging(corsMiddleware(mux))
-}
-
-// CORS Middleware
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-
-		// อ่านรายการ Origin ที่อนุญาตจาก Environment Variable
-		allowedOrigins := make(map[string]bool)
-
-		originsEnv := os.Getenv("ALLOWED_ORIGINS")
-
-		if originsEnv == "" {
-			// ค่าเริ่มต้นสำหรับการทดสอบบนเครื่องตัวเอง
-			allowedOrigins["http://127.0.0.1:3000"] = true
-			allowedOrigins["http://localhost:3000"] = true
-		} else {
-			// รองรับหลาย Origin โดยคั่นด้วยเครื่องหมายจุลภาค
-			for _, allowedOrigin := range strings.Split(originsEnv, ",") {
-				allowedOrigin = strings.TrimSpace(allowedOrigin)
-
-				if allowedOrigin != "" {
-					allowedOrigins[allowedOrigin] = true
-				}
-			}
-		}
-
-		if allowedOrigins[origin] {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-		}
-
-		w.Header().Set(
-			"Access-Control-Allow-Methods",
-			"GET, POST, PUT, PATCH, DELETE, OPTIONS",
-		)
-
-		w.Header().Set(
-			"Access-Control-Allow-Headers",
-			"Content-Type, Authorization",
-		)
-
-		// Handle browser preflight request
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	return middleware.Logging(middleware.CORS(mux))
 }
