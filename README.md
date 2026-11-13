@@ -26,18 +26,52 @@ Backend API สำหรับเว็บไซต์ GameHub พัฒนา�
 
 ```text
 gamehub-backend/
-├── database/
-├── handlers/
-├── middleware/
-├── models/
-├── routes/
-├── services/
+├── auth/
+│   ├── password.go
+│   ├── token.go
+│   └── token_test.go
 ├── cmd/
+│   └── importigdb/
+│       └── main.go
+├── database/
+│   └── database.go
+├── handlers/
+│   ├── admin_games.go
+│   ├── auth.go
+│   ├── game_detail.go
+│   ├── games.go
+│   ├── library.go
+│   ├── members.go
+│   ├── profile.go
+│   ├── rating.go
+│   └── review.go
+├── middleware/
+│   ├── auth.go
+│   ├── cors.go
+│   └── logging.go
+├── models/
+│   └── game.go
+├── routes/
+│   └── routes.go
+├── services/
+│   └── igdb.go
+├── store/
+│   ├── admin_games.go
+│   ├── auth.go
+│   ├── game_detail.go
+│   ├── games.go
+│   ├── library.go
+│   ├── members.go
+│   ├── profile.go
+│   ├── rating.go
+│   └── review.go
 ├── main.go
 ├── schema.sql
 ├── seed.sql
+├── gamehub_dump.sql
 ├── docker-compose.yml
 ├── go.mod
+├── go.sum
 └── README.md
 ```
 
