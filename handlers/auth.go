@@ -4,14 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"os"
 	"strings"
-	"time"
 
+	"gamehub-backend/auth"
 	"gamehub-backend/middleware"
-
-	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
+	"gamehub-backend/store"
 )
 
 type AuthHandler struct {
@@ -53,13 +50,6 @@ type LoginResponse struct {
 	Role     string `json:"role"`
 }
 
-type Claims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
-	jwt.RegisteredClaims
-}
-
 // API สมัครสมาชิก
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
@@ -82,16 +72,13 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exists bool
-
-	err := h.DB.QueryRowContext(r.Context(), `
-		SELECT EXISTS (
-			SELECT 1
-			FROM public.users
-			WHERE LOWER(TRIM(username)) = LOWER($1)
-			   OR LOWER(TRIM(email)) = LOWER($2)
-		)
-	`, req.Username, req.Email).Scan(&exists)
+	// ตรวจสอบชื่อผู้ใช้และอีเมลซ้ำ
+	exists, err := store.CheckUserExists(
+		r.Context(),
+		h.DB,
+		req.Username,
+		req.Email,
+	)
 
 	if err != nil {
 		http.Error(w, "ไม่สามารถตรวจสอบข้อมูลสมาชิกได้", http.StatusInternalServerError)
@@ -103,31 +90,20 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword(
-		[]byte(req.Password),
-		bcrypt.DefaultCost,
-	)
-
+	// เข้ารหัสรหัสผ่าน
+	hashedPassword, err := auth.HashPassword(req.Password)
 	if err != nil {
 		http.Error(w, "ไม่สามารถเข้ารหัสรหัสผ่านได้", http.StatusInternalServerError)
 		return
 	}
 
-	var response RegisterResponse
-
-	err = h.DB.QueryRowContext(r.Context(), `
-		INSERT INTO public.users (username, email, password_hash)
-		VALUES ($1, $2, $3)
-		RETURNING id, username, email, role
-	`,
+	// บันทึกสมาชิกใหม่
+	user, err := store.CreateUser(
+		r.Context(),
+		h.DB,
 		req.Username,
 		req.Email,
-		string(hashedPassword),
-	).Scan(
-		&response.ID,
-		&response.Username,
-		&response.Email,
-		&response.Role,
+		hashedPassword,
 	)
 
 	if err != nil {
@@ -135,8 +111,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Status = "success"
-	response.Message = "สมัครสมาชิกสำเร็จ"
+	response := RegisterResponse{
+		Status:   "success",
+		Message:  "สมัครสมาชิกสำเร็จ",
+		ID:       user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Role:     user.Role,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -159,24 +141,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var id int64
-	var username string
-	var email string
-	var passwordHash string
-	var role string
-	var status string
-
-	err := h.DB.QueryRowContext(r.Context(), `
-		SELECT id, username, email, password_hash, role, status
-		FROM public.users
-		WHERE LOWER(TRIM(email)) = $1
-	`, req.Email).Scan(
-		&id,
-		&username,
-		&email,
-		&passwordHash,
-		&role,
-		&status,
+	// ค้นหาสมาชิกจากอีเมล
+	user, err := store.GetUserByEmail(
+		r.Context(),
+		h.DB,
+		req.Email,
 	)
 
 	if err != nil {
@@ -189,38 +158,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if status != "active" {
+	if user.Status != "active" {
 		http.Error(w, "บัญชีนี้ไม่สามารถใช้งานได้", http.StatusForbidden)
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword(
-		[]byte(passwordHash),
-		[]byte(req.Password),
-	); err != nil {
+	// ตรวจสอบรหัสผ่าน
+	if err := auth.CheckPassword(user.PasswordHash, req.Password); err != nil {
 		http.Error(w, "อีเมลหรือรหัสผ่านไม่ถูกต้อง", http.StatusUnauthorized)
 		return
 	}
 
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		http.Error(w, "ระบบยังไม่ได้ตั้งค่า JWT_SECRET", http.StatusInternalServerError)
-		return
-	}
-
-	claims := Claims{
-		UserID:   id,
-		Username: username,
-		Role:     role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	tokenString, err := token.SignedString([]byte(secret))
+	// สร้าง JWT Token
+	tokenString, err := auth.GenerateToken(user.ID, user.Username, user.Role)
 	if err != nil {
 		http.Error(w, "ไม่สามารถสร้าง Token ได้", http.StatusInternalServerError)
 		return
@@ -230,10 +180,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Status:   "success",
 		Message:  "เข้าสู่ระบบสำเร็จ",
 		Token:    tokenString,
-		ID:       id,
-		Username: username,
-		Email:    email,
-		Role:     role,
+		ID:       user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Role:     user.Role,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -273,14 +223,12 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// อ่านรหัสผ่านเดิมจาก Database
-	var passwordHash string
-
-	err := h.DB.QueryRowContext(r.Context(), `
-		SELECT password_hash
-		FROM public.users
-		WHERE id = $1
-	`, claims.UserID).Scan(&passwordHash)
+	// อ่านรหัสผ่านเดิมจาก Store
+	passwordHash, err := store.GetPasswordHash(
+		r.Context(),
+		h.DB,
+		claims.UserID,
+	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -293,40 +241,27 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ตรวจสอบรหัสผ่านเดิม
-	if err := bcrypt.CompareHashAndPassword(
-		[]byte(passwordHash),
-		[]byte(req.OldPassword),
-	); err != nil {
+	if err := auth.CheckPassword(passwordHash, req.OldPassword); err != nil {
 		http.Error(w, "รหัสผ่านเดิมไม่ถูกต้อง", http.StatusUnauthorized)
 		return
 	}
 
 	// เข้ารหัสรหัสผ่านใหม่
-	newPasswordHash, err := bcrypt.GenerateFromPassword(
-		[]byte(req.NewPassword),
-		bcrypt.DefaultCost,
-	)
-
+	newPasswordHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
 		http.Error(w, "ไม่สามารถเข้ารหัสรหัสผ่านใหม่ได้", http.StatusInternalServerError)
 		return
 	}
 
-	// บันทึกรหัสผ่านใหม่
-	result, err := h.DB.ExecContext(r.Context(), `
-		UPDATE public.users
-		SET password_hash = $1,
-		    updated_at = NOW()
-		WHERE id = $2
-	`, string(newPasswordHash), claims.UserID)
+	// บันทึกรหัสผ่านใหม่ผ่าน Store
+	updated, err := store.UpdatePassword(
+		r.Context(),
+		h.DB,
+		claims.UserID,
+		newPasswordHash,
+	)
 
-	if err != nil {
-		http.Error(w, "ไม่สามารถเปลี่ยนรหัสผ่านได้", http.StatusInternalServerError)
-		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil || rowsAffected == 0 {
+	if err != nil || !updated {
 		http.Error(w, "ไม่สามารถเปลี่ยนรหัสผ่านได้", http.StatusInternalServerError)
 		return
 	}

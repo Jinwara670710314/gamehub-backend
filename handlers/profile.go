@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"gamehub-backend/middleware"
+	"gamehub-backend/store"
 )
 
 type ProfileHandler struct {
@@ -37,21 +38,7 @@ func (h *ProfileHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var profile ProfileResponse
-	var accountStatus string
-
-	err := h.DB.QueryRowContext(r.Context(),
-		`SELECT id, username, email, role, status
-		 FROM users
-		 WHERE id = $1`,
-		claims.UserID,
-	).Scan(
-		&profile.ID,
-		&profile.Username,
-		&profile.Email,
-		&profile.Role,
-		&accountStatus,
-	)
+	user, err := store.GetUserProfile(r.Context(), h.DB, claims.UserID)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, `{"status":"error","message":"ไม่พบบัญชีผู้ใช้"}`, http.StatusUnauthorized)
@@ -63,13 +50,19 @@ func (h *ProfileHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if accountStatus != "active" {
+	if user.Status != "active" {
 		http.Error(w, `{"status":"error","message":"บัญชีถูกระงับ"}`, http.StatusForbidden)
 		return
 	}
 
-	profile.Status = "success"
-	profile.Message = "ดึงข้อมูลผู้ใช้สำเร็จ"
+	profile := ProfileResponse{
+		Status:   "success",
+		Message:  "ดึงข้อมูลผู้ใช้สำเร็จ",
+		ID:       user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Role:     user.Role,
+	}
 
 	json.NewEncoder(w).Encode(profile)
 }
@@ -105,17 +98,12 @@ func (h *ProfileHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ตรวจสอบ Username ซ้ำ
-	var usernameExists bool
-
-	err := h.DB.QueryRowContext(r.Context(),
-		`SELECT EXISTS(
-			SELECT 1 FROM users
-			WHERE LOWER(TRIM(username)) = LOWER($1)
-			AND id <> $2
-		)`,
+	usernameExists, err := store.UsernameExists(
+		r.Context(),
+		h.DB,
 		req.Username,
 		claims.UserID,
-	).Scan(&usernameExists)
+	)
 
 	if err != nil {
 		http.Error(w, `{"status":"error","message":"ตรวจสอบ Username ไม่สำเร็จ"}`, http.StatusInternalServerError)
@@ -128,17 +116,12 @@ func (h *ProfileHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ตรวจสอบ Email ซ้ำ
-	var emailExists bool
-
-	err = h.DB.QueryRowContext(r.Context(),
-		`SELECT EXISTS(
-			SELECT 1 FROM users
-			WHERE LOWER(TRIM(email)) = LOWER($1)
-			AND id <> $2
-		)`,
+	emailExists, err := store.EmailExists(
+		r.Context(),
+		h.DB,
 		req.Email,
 		claims.UserID,
-	).Scan(&emailExists)
+	)
 
 	if err != nil {
 		http.Error(w, `{"status":"error","message":"ตรวจสอบ Email ไม่สำเร็จ"}`, http.StatusInternalServerError)
@@ -151,23 +134,12 @@ func (h *ProfileHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// อัปเดตข้อมูลผู้ใช้
-	var profile ProfileResponse
-
-	err = h.DB.QueryRowContext(r.Context(),
-		`UPDATE users
-		 SET username = $1,
-		     email = $2,
-		     updated_at = NOW()
-		 WHERE id = $3
-		 RETURNING id, username, email, role`,
+	user, err := store.UpdateUserProfile(
+		r.Context(),
+		h.DB,
+		claims.UserID,
 		req.Username,
 		req.Email,
-		claims.UserID,
-	).Scan(
-		&profile.ID,
-		&profile.Username,
-		&profile.Email,
-		&profile.Role,
 	)
 
 	if err == sql.ErrNoRows {
@@ -180,8 +152,14 @@ func (h *ProfileHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile.Status = "success"
-	profile.Message = "แก้ไขข้อมูลโปรไฟล์สำเร็จ"
+	profile := ProfileResponse{
+		Status:   "success",
+		Message:  "แก้ไขข้อมูลโปรไฟล์สำเร็จ",
+		ID:       user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Role:     user.Role,
+	}
 
 	json.NewEncoder(w).Encode(profile)
 }

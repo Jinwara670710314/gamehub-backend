@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"gamehub-backend/middleware"
+	"gamehub-backend/store"
 )
 
 type MemberHandler struct {
@@ -29,47 +30,30 @@ type UpdateMemberStatusRequest struct {
 
 // API สำหรับ Admin ดูรายชื่อสมาชิกทั้งหมด
 func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT id, username, email, role, status
-		FROM public.users
-		ORDER BY id ASC
-	`)
+	members, err := store.GetMembers(r.Context(), h.DB)
 
 	if err != nil {
 		http.Error(w, "ไม่สามารถดึงข้อมูลสมาชิกได้", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
 
-	members := []Member{}
+	responseMembers := make([]Member, 0, len(members))
 
-	for rows.Next() {
-		var member Member
-
-		if err := rows.Scan(
-			&member.ID,
-			&member.Username,
-			&member.Email,
-			&member.Role,
-			&member.Status,
-		); err != nil {
-			http.Error(w, "เกิดข้อผิดพลาดในการอ่านข้อมูลสมาชิก", http.StatusInternalServerError)
-			return
-		}
-
-		members = append(members, member)
-	}
-
-	if err := rows.Err(); err != nil {
-		http.Error(w, "เกิดข้อผิดพลาดในการดึงข้อมูลสมาชิก", http.StatusInternalServerError)
-		return
+	for _, member := range members {
+		responseMembers = append(responseMembers, Member{
+			ID:       member.ID,
+			Username: member.Username,
+			Email:    member.Email,
+			Role:     member.Role,
+			Status:   member.Status,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "success",
-		"count":  len(members),
-		"data":   members,
+		"count":  len(responseMembers),
+		"data":   responseMembers,
 	})
 }
 
@@ -106,31 +90,15 @@ func (h *MemberHandler) UpdateMemberStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var member Member
-
-	err = h.DB.QueryRowContext(r.Context(), `
-		UPDATE public.users
-		SET status = $1,
-		    updated_at = NOW()
-		WHERE id = $2
-		  AND role = 'member'
-		RETURNING id, username, email, role, status
-	`, req.Status, id).Scan(
-		&member.ID,
-		&member.Username,
-		&member.Email,
-		&member.Role,
-		&member.Status,
+	updatedMember, err := store.UpdateMemberStatus(
+		r.Context(),
+		h.DB,
+		id,
+		req.Status,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		var role string
-
-		checkErr := h.DB.QueryRowContext(r.Context(), `
-			SELECT role
-			FROM public.users
-			WHERE id = $1
-		`, id).Scan(&role)
+		role, checkErr := store.GetMemberRole(r.Context(), h.DB, id)
 
 		if errors.Is(checkErr, sql.ErrNoRows) {
 			http.Error(w, "ไม่พบสมาชิกที่ต้องการ", http.StatusNotFound)
@@ -154,6 +122,14 @@ func (h *MemberHandler) UpdateMemberStatus(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		http.Error(w, "ไม่สามารถเปลี่ยนสถานะสมาชิกได้", http.StatusInternalServerError)
 		return
+	}
+
+	member := Member{
+		ID:       updatedMember.ID,
+		Username: updatedMember.Username,
+		Email:    updatedMember.Email,
+		Role:     updatedMember.Role,
+		Status:   updatedMember.Status,
 	}
 
 	message := "เปิดใช้งานบัญชีสมาชิกสำเร็จ"

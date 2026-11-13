@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"gamehub-backend/middleware"
+	"gamehub-backend/store"
 )
 
 type RatingHandler struct {
@@ -51,14 +52,7 @@ func (h *RatingHandler) SubmitRating(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existingGameID int64
-
-	err = h.DB.QueryRow(`
-		SELECT id
-		FROM games
-		WHERE id = $1
-		AND is_deleted = FALSE
-	`, gameID).Scan(&existingGameID)
+	err = store.CheckActiveGame(r.Context(), h.DB, gameID)
 
 	if err == sql.ErrNoRows {
 		reviewError(w, http.StatusNotFound, "ไม่พบเกมนี้")
@@ -70,14 +64,13 @@ func (h *RatingHandler) SubmitRating(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.DB.Exec(`
-		INSERT INTO game_ratings (user_id, game_id, rating)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, game_id)
-		DO UPDATE SET
-			rating = EXCLUDED.rating,
-			updated_at = NOW()
-	`, claims.UserID, gameID, req.Rating)
+	err = store.UpsertRating(
+		r.Context(),
+		h.DB,
+		claims.UserID,
+		gameID,
+		req.Rating,
+	)
 
 	if err != nil {
 		reviewError(w, http.StatusInternalServerError, "บันทึกคะแนนไม่สำเร็จ")
@@ -101,43 +94,7 @@ func (h *RatingHandler) GetRatingSummary(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var summary RatingSummary
-
-	err = h.DB.QueryRow(`
-		SELECT
-			g.id,
-
-			COALESCE(
-				(
-					SELECT ROUND(AVG(rating)::numeric, 2)
-					FROM game_ratings
-					WHERE game_id = g.id
-				),
-				0
-			)::float8,
-
-			(
-				SELECT COUNT(*)
-				FROM game_ratings
-				WHERE game_id = g.id
-			),
-
-			(
-				SELECT COUNT(*)
-				FROM game_reviews
-				WHERE game_id = g.id
-				AND status = 'visible'
-			)
-
-		FROM games g
-		WHERE g.id = $1
-		AND g.is_deleted = FALSE
-	`, gameID).Scan(
-		&summary.GameID,
-		&summary.AverageRating,
-		&summary.TotalRatings,
-		&summary.TotalReviews,
-	)
+	result, err := store.GetRatingOverview(r.Context(), h.DB, gameID)
 
 	if err == sql.ErrNoRows {
 		reviewError(w, http.StatusNotFound, "ไม่พบเกมนี้")
@@ -147,6 +104,13 @@ func (h *RatingHandler) GetRatingSummary(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		reviewError(w, http.StatusInternalServerError, "ดึงข้อมูลสรุปคะแนนไม่สำเร็จ")
 		return
+	}
+
+	summary := RatingSummary{
+		GameID:        result.GameID,
+		AverageRating: result.AverageRating,
+		TotalRatings:  result.TotalRatings,
+		TotalReviews:  result.TotalReviews,
 	}
 
 	reviewJSON(w, http.StatusOK, map[string]interface{}{

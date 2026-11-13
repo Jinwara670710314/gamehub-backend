@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gamehub-backend/middleware"
+	"gamehub-backend/store"
 )
 
 type LibraryHandler struct {
@@ -21,17 +22,6 @@ type AddLibraryRequest struct {
 
 type UpdateLibraryRequest struct {
 	Status string `json:"status"`
-}
-
-type LibraryGame struct {
-	ID          int64   `json:"id"`
-	GameID      int64   `json:"game_id"`
-	Name        string  `json:"name"`
-	Genre       *string `json:"genre"`
-	Year        *int    `json:"year"`
-	Image       *string `json:"image"`
-	Description *string `json:"description"`
-	Status      string  `json:"status"`
 }
 
 // ตรวจสอบสถานะเกม
@@ -76,16 +66,13 @@ func (h *LibraryHandler) AddGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var libraryID int64
-
-	err := h.DB.QueryRowContext(r.Context(),
-		`INSERT INTO user_game_library (user_id, game_id, status)
-		 VALUES ($1, $2, $3)
-		 RETURNING id`,
+	libraryID, err := store.AddLibraryGame(
+		r.Context(),
+		h.DB,
 		claims.UserID,
 		req.GameID,
 		req.Status,
-	).Scan(&libraryID)
+	)
 
 	if err != nil {
 		if strings.Contains(err.Error(), "user_game_library_user_id_game_id_key") {
@@ -122,56 +109,14 @@ func (h *LibraryHandler) GetLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT
-			ugl.id,
-			g.id,
-			g.name,
-			g.genre,
-			g.year,
-			g.image,
-			g.description,
-			ugl.status
-		FROM user_game_library ugl
-		JOIN games g ON g.id = ugl.game_id
-		WHERE ugl.user_id = $1
-		  AND g.is_deleted = FALSE
-		ORDER BY ugl.created_at DESC`,
+	games, err := store.GetLibraryGames(
+		r.Context(),
+		h.DB,
 		claims.UserID,
 	)
 
 	if err != nil {
 		http.Error(w, `{"status":"error","message":"ดึงข้อมูลคลังเกมไม่สำเร็จ"}`, http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	games := []LibraryGame{}
-
-	for rows.Next() {
-		var game LibraryGame
-
-		err := rows.Scan(
-			&game.ID,
-			&game.GameID,
-			&game.Name,
-			&game.Genre,
-			&game.Year,
-			&game.Image,
-			&game.Description,
-			&game.Status,
-		)
-
-		if err != nil {
-			http.Error(w, `{"status":"error","message":"อ่านข้อมูลเกมไม่สำเร็จ"}`, http.StatusInternalServerError)
-			return
-		}
-
-		games = append(games, game)
-	}
-
-	if err := rows.Err(); err != nil {
-		http.Error(w, `{"status":"error","message":"อ่านข้อมูลคลังเกมไม่สำเร็จ"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -211,13 +156,12 @@ func (h *LibraryHandler) UpdateGameStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, err := h.DB.ExecContext(r.Context(),
-		`UPDATE user_game_library
-		 SET status = $1, updated_at = NOW()
-		 WHERE id = $2 AND user_id = $3`,
-		req.Status,
+	updated, err := store.UpdateLibraryGameStatus(
+		r.Context(),
+		h.DB,
 		libraryID,
 		claims.UserID,
+		req.Status,
 	)
 
 	if err != nil {
@@ -225,13 +169,7 @@ func (h *LibraryHandler) UpdateGameStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	affected, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, `{"status":"error","message":"ตรวจสอบผลการแก้ไขไม่สำเร็จ"}`, http.StatusInternalServerError)
-		return
-	}
-
-	if affected == 0 {
+	if !updated {
 		http.Error(w, `{"status":"error","message":"ไม่พบเกมในคลังของคุณ"}`, http.StatusNotFound)
 		return
 	}
@@ -261,9 +199,9 @@ func (h *LibraryHandler) RemoveGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.DB.ExecContext(r.Context(),
-		`DELETE FROM user_game_library
-		 WHERE id = $1 AND user_id = $2`,
+	removed, err := store.RemoveLibraryGame(
+		r.Context(),
+		h.DB,
 		libraryID,
 		claims.UserID,
 	)
@@ -273,13 +211,7 @@ func (h *LibraryHandler) RemoveGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	affected, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, `{"status":"error","message":"ตรวจสอบผลการลบไม่สำเร็จ"}`, http.StatusInternalServerError)
-		return
-	}
-
-	if affected == 0 {
+	if !removed {
 		http.Error(w, `{"status":"error","message":"ไม่พบเกมในคลังของคุณ"}`, http.StatusNotFound)
 		return
 	}

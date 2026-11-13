@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gamehub-backend/models"
+	"gamehub-backend/store"
 )
 
 type GameHandler struct {
@@ -41,77 +42,16 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 		offset = parsed
 	}
 
-	var total int
-	err := h.DB.QueryRowContext(r.Context(), `
-		SELECT COUNT(*)
-		FROM public.games
-		WHERE is_deleted = FALSE
-		AND ($1 = '' OR name ILIKE '%' || $1 || '%')
-	`, search).Scan(&total)
-
-	if err != nil {
-		http.Error(w, "ไม่สามารถนับจำนวนเกมได้", http.StatusInternalServerError)
-		return
-	}
-
-	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT id, name, genre, year, image, description, igdb_id
-		FROM public.games
-		WHERE is_deleted = FALSE
-		AND ($1 = '' OR name ILIKE '%' || $1 || '%')
-		ORDER BY id ASC
-		LIMIT $2 OFFSET $3
-	`, search, limit, offset)
+	games, total, err := store.GetGames(
+		r.Context(),
+		h.DB,
+		search,
+		limit,
+		offset,
+	)
 
 	if err != nil {
 		http.Error(w, "ไม่สามารถดึงข้อมูลเกมได้", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	games := []models.Game{}
-
-	for rows.Next() {
-		var game models.Game
-		var genre, image, description sql.NullString
-		var year, igdbID sql.NullInt64
-
-		err := rows.Scan(
-			&game.ID,
-			&game.Name,
-			&genre,
-			&year,
-			&image,
-			&description,
-			&igdbID,
-		)
-		if err != nil {
-			http.Error(w, "เกิดข้อผิดพลาดในการอ่านข้อมูลเกม", http.StatusInternalServerError)
-			return
-		}
-
-		if genre.Valid {
-			game.Genre = &genre.String
-		}
-		if year.Valid {
-			value := int(year.Int64)
-			game.Year = &value
-		}
-		if image.Valid {
-			game.Image = &image.String
-		}
-		if description.Valid {
-			game.Description = &description.String
-		}
-		if igdbID.Valid {
-			game.IGDBID = &igdbID.Int64
-		}
-
-		games = append(games, game)
-	}
-
-	if err := rows.Err(); err != nil {
-		http.Error(w, "เกิดข้อผิดพลาดในการดึงข้อมูลเกม", http.StatusInternalServerError)
 		return
 	}
 
@@ -153,23 +93,7 @@ func (h *GameHandler) GetGameByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var game models.Game
-	var genre, image, description sql.NullString
-	var year, igdbID sql.NullInt64
-
-	err = h.DB.QueryRowContext(r.Context(), `
-		SELECT id, name, genre, year, image, description, igdb_id
-		FROM public.games
-		WHERE id = $1 AND is_deleted = FALSE
-	`, id).Scan(
-		&game.ID,
-		&game.Name,
-		&genre,
-		&year,
-		&image,
-		&description,
-		&igdbID,
-	)
+	game, err := store.GetGameByID(r.Context(), h.DB, id)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "ไม่พบเกมที่ต้องการ", http.StatusNotFound)
@@ -179,23 +103,6 @@ func (h *GameHandler) GetGameByID(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "ไม่สามารถดึงรายละเอียดเกมได้", http.StatusInternalServerError)
 		return
-	}
-
-	if genre.Valid {
-		game.Genre = &genre.String
-	}
-	if year.Valid {
-		value := int(year.Int64)
-		game.Year = &value
-	}
-	if image.Valid {
-		game.Image = &image.String
-	}
-	if description.Valid {
-		game.Description = &description.String
-	}
-	if igdbID.Valid {
-		game.IGDBID = &igdbID.Int64
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -220,54 +127,12 @@ func (h *GameHandler) CreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var game models.Game
-	var genre, image, description sql.NullString
-	var year, igdbID sql.NullInt64
-
-	err := h.DB.QueryRowContext(r.Context(), `
-		INSERT INTO public.games
-			(name, genre, year, image, description, igdb_id, is_deleted)
-		VALUES
-			($1, $2, $3, $4, $5, $6, FALSE)
-		RETURNING id, name, genre, year, image, description, igdb_id
-	`,
-		input.Name,
-		input.Genre,
-		input.Year,
-		input.Image,
-		input.Description,
-		input.IGDBID,
-	).Scan(
-		&game.ID,
-		&game.Name,
-		&genre,
-		&year,
-		&image,
-		&description,
-		&igdbID,
-	)
+	game, err := store.CreateGame(r.Context(), h.DB, input)
 
 	if err != nil {
 		log.Println("Create game error:", err)
 		http.Error(w, "ไม่สามารถเพิ่มเกมได้", http.StatusInternalServerError)
 		return
-	}
-
-	if genre.Valid {
-		game.Genre = &genre.String
-	}
-	if year.Valid {
-		value := int(year.Int64)
-		game.Year = &value
-	}
-	if image.Valid {
-		game.Image = &image.String
-	}
-	if description.Valid {
-		game.Description = &description.String
-	}
-	if igdbID.Valid {
-		game.IGDBID = &igdbID.Int64
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -301,39 +166,7 @@ func (h *GameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var game models.Game
-	var genre, image, description sql.NullString
-	var year, igdbID sql.NullInt64
-
-	err = h.DB.QueryRowContext(r.Context(), `
-		UPDATE public.games
-		SET
-			name = $1,
-			genre = $2,
-			year = $3,
-			image = $4,
-			description = $5,
-			igdb_id = $6,
-			updated_at = NOW()
-		WHERE id = $7 AND is_deleted = FALSE
-		RETURNING id, name, genre, year, image, description, igdb_id
-	`,
-		input.Name,
-		input.Genre,
-		input.Year,
-		input.Image,
-		input.Description,
-		input.IGDBID,
-		id,
-	).Scan(
-		&game.ID,
-		&game.Name,
-		&genre,
-		&year,
-		&image,
-		&description,
-		&igdbID,
-	)
+	game, err := store.UpdateGame(r.Context(), h.DB, id, input)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "ไม่พบเกมที่ต้องการแก้ไข", http.StatusNotFound)
@@ -344,23 +177,6 @@ func (h *GameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) {
 		log.Println("Update game error:", err)
 		http.Error(w, "ไม่สามารถแก้ไขข้อมูลเกมได้", http.StatusInternalServerError)
 		return
-	}
-
-	if genre.Valid {
-		game.Genre = &genre.String
-	}
-	if year.Valid {
-		value := int(year.Int64)
-		game.Year = &value
-	}
-	if image.Valid {
-		game.Image = &image.String
-	}
-	if description.Valid {
-		game.Description = &description.String
-	}
-	if igdbID.Valid {
-		game.IGDBID = &igdbID.Int64
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -379,12 +195,7 @@ func (h *GameHandler) DeleteGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.DB.ExecContext(r.Context(), `
-		UPDATE public.games
-		SET is_deleted = TRUE,
-		    updated_at = NOW()
-		WHERE id = $1 AND is_deleted = FALSE
-	`, id)
+	deleted, err := store.DeleteGame(r.Context(), h.DB, id)
 
 	if err != nil {
 		log.Println("Delete game error:", err)
@@ -392,13 +203,7 @@ func (h *GameHandler) DeleteGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, "ไม่สามารถตรวจสอบผลการลบเกมได้", http.StatusInternalServerError)
-		return
-	}
-
-	if rowsAffected == 0 {
+	if !deleted {
 		http.Error(w, "ไม่พบเกมที่ต้องการลบ", http.StatusNotFound)
 		return
 	}
@@ -419,12 +224,7 @@ func (h *GameHandler) RestoreGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.DB.ExecContext(r.Context(), `
-		UPDATE public.games
-		SET is_deleted = FALSE,
-		    updated_at = NOW()
-		WHERE id = $1 AND is_deleted = TRUE
-	`, id)
+	restored, err := store.RestoreGame(r.Context(), h.DB, id)
 
 	if err != nil {
 		log.Println("Restore game error:", err)
@@ -432,13 +232,7 @@ func (h *GameHandler) RestoreGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, "ไม่สามารถตรวจสอบผลการกู้คืนเกมได้", http.StatusInternalServerError)
-		return
-	}
-
-	if rowsAffected == 0 {
+	if !restored {
 		http.Error(w, "ไม่พบเกมที่ถูกลบหรือเกมนี้ยังไม่ได้ถูกลบ", http.StatusNotFound)
 		return
 	}

@@ -4,20 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"os"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
+	"gamehub-backend/auth"
+	"gamehub-backend/store"
 )
-
-// ข้อมูลผู้ใช้ที่อ่านได้จาก JWT
-type Claims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
-	jwt.RegisteredClaims
-}
 
 // ใช้เก็บข้อมูลผู้ใช้ใน Request Context
 type contextKey string
@@ -25,8 +18,8 @@ type contextKey string
 const userContextKey contextKey = "user"
 
 // อ่านข้อมูลผู้ใช้จาก Context
-func GetUser(r *http.Request) (*Claims, bool) {
-	claims, ok := r.Context().Value(userContextKey).(*Claims)
+func GetUser(r *http.Request) (*auth.Claims, bool) {
+	claims, ok := r.Context().Value(userContextKey).(*auth.Claims)
 	return claims, ok
 }
 
@@ -48,29 +41,14 @@ func Auth(next http.Handler) http.Handler {
 			return
 		}
 
-		tokenString := parts[1]
-		secret := os.Getenv("JWT_SECRET")
+		claims, err := auth.ParseToken(parts[1])
 
-		if secret == "" {
+		if errors.Is(err, auth.ErrMissingJWTSecret) {
 			writeError(w, http.StatusInternalServerError, "ไม่พบ JWT_SECRET")
 			return
 		}
 
-		claims := &Claims{}
-
-		token, err := jwt.ParseWithClaims(
-			tokenString,
-			claims,
-			func(token *jwt.Token) (interface{}, error) {
-				if token.Method != jwt.SigningMethodHS256 {
-					return nil, jwt.ErrSignatureInvalid
-				}
-
-				return []byte(secret), nil
-			},
-		)
-
-		if err != nil || !token.Valid {
+		if err != nil {
 			writeError(w, http.StatusUnauthorized, "Token ไม่ถูกต้องหรือหมดอายุ")
 			return
 		}
@@ -99,20 +77,18 @@ func Active(db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 
-			var status string
+			status, err := store.GetMemberStatus(
+				r.Context(),
+				db,
+				claims.UserID,
+			)
 
-			err := db.QueryRowContext(r.Context(), `
-				SELECT status
-				FROM public.users
-				WHERE id = $1
-			`, claims.UserID).Scan(&status)
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusUnauthorized, "ไม่พบบัญชีผู้ใช้")
+				return
+			}
 
 			if err != nil {
-				if err == sql.ErrNoRows {
-					writeError(w, http.StatusUnauthorized, "ไม่พบบัญชีผู้ใช้")
-					return
-				}
-
 				writeError(w, http.StatusInternalServerError, "ไม่สามารถตรวจสอบสถานะบัญชีได้")
 				return
 			}
@@ -140,21 +116,18 @@ func Admin(db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 
-			var role string
-			var status string
+			role, status, err := store.GetMemberAccess(
+				r.Context(),
+				db,
+				claims.UserID,
+			)
 
-			err := db.QueryRowContext(r.Context(), `
-				SELECT role, status
-				FROM public.users
-				WHERE id = $1
-			`, claims.UserID).Scan(&role, &status)
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusUnauthorized, "ไม่พบบัญชีผู้ใช้")
+				return
+			}
 
 			if err != nil {
-				if err == sql.ErrNoRows {
-					writeError(w, http.StatusUnauthorized, "ไม่พบบัญชีผู้ใช้")
-					return
-				}
-
 				writeError(w, http.StatusInternalServerError, "ไม่สามารถตรวจสอบสิทธิ์ผู้ใช้ได้")
 				return
 			}

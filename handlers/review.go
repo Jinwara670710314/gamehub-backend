@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"gamehub-backend/middleware"
+	"gamehub-backend/store"
 )
 
 type ReviewHandler struct {
@@ -86,15 +88,9 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existingGameID int64
+	err = store.CheckReviewGame(r.Context(), h.DB, gameID)
 
-	err = h.DB.QueryRow(`
-		SELECT id
-		FROM games
-		WHERE id = $1 AND is_deleted = FALSE
-	`, gameID).Scan(&existingGameID)
-
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		reviewError(w, http.StatusNotFound, "ไม่พบเกมนี้")
 		return
 	}
@@ -104,41 +100,36 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.DB.Begin()
-	if err != nil {
+	reviewID, err := store.CreateReview(
+		r.Context(),
+		h.DB,
+		claims.UserID,
+		gameID,
+		content,
+		req.Rating,
+	)
+
+	if store.IsReviewStage(err, "begin") {
 		reviewError(w, http.StatusInternalServerError, "เริ่มบันทึกข้อมูลไม่สำเร็จ")
 		return
 	}
-	defer tx.Rollback()
 
-	var reviewID int64
-
-	err = tx.QueryRow(`
-		INSERT INTO game_reviews (user_id, game_id, content)
-		VALUES ($1, $2, $3)
-		RETURNING id
-	`, claims.UserID, gameID, content).Scan(&reviewID)
-
-	if err != nil {
+	if store.IsReviewStage(err, "insert") {
 		reviewError(w, http.StatusConflict, "คุณเคยรีวิวเกมนี้แล้ว หรือไม่สามารถบันทึกรีวิวได้")
 		return
 	}
 
-	_, err = tx.Exec(`
-		INSERT INTO game_ratings (user_id, game_id, rating)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, game_id)
-		DO UPDATE SET
-			rating = EXCLUDED.rating,
-			updated_at = NOW()
-	`, claims.UserID, gameID, req.Rating)
-
-	if err != nil {
+	if store.IsReviewStage(err, "rating") {
 		reviewError(w, http.StatusInternalServerError, "บันทึกคะแนนไม่สำเร็จ")
 		return
 	}
 
-	if err := tx.Commit(); err != nil {
+	if store.IsReviewStage(err, "commit") {
+		reviewError(w, http.StatusInternalServerError, "บันทึกรีวิวไม่สำเร็จ")
+		return
+	}
+
+	if err != nil {
 		reviewError(w, http.StatusInternalServerError, "บันทึกรีวิวไม่สำเร็จ")
 		return
 	}
@@ -161,61 +152,32 @@ func (h *ReviewHandler) GetReviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.DB.Query(`
-		SELECT
-			gr.id,
-			gr.user_id,
-			u.username,
-			gr.game_id,
-			gr.content,
-			COALESCE(rt.rating, 0),
-			gr.status,
-			gr.created_at,
-			gr.updated_at
-		FROM game_reviews gr
-		JOIN users u ON u.id = gr.user_id
-		LEFT JOIN game_ratings rt
-			ON rt.user_id = gr.user_id
-			AND rt.game_id = gr.game_id
-		WHERE gr.game_id = $1
-		AND gr.status = 'visible'
-		ORDER BY gr.created_at DESC
-	`, gameID)
+	results, err := store.GetReviews(r.Context(), h.DB, gameID)
 
-	if err != nil {
+	if store.IsReviewStage(err, "query") {
 		reviewError(w, http.StatusInternalServerError, "ดึงรีวิวไม่สำเร็จ")
 		return
 	}
-	defer rows.Close()
 
-	reviews := []ReviewResponse{}
-
-	for rows.Next() {
-		var review ReviewResponse
-
-		err := rows.Scan(
-			&review.ID,
-			&review.UserID,
-			&review.Username,
-			&review.GameID,
-			&review.Content,
-			&review.Rating,
-			&review.Status,
-			&review.CreatedAt,
-			&review.UpdatedAt,
-		)
-
-		if err != nil {
-			reviewError(w, http.StatusInternalServerError, "อ่านข้อมูลรีวิวไม่สำเร็จ")
-			return
-		}
-
-		reviews = append(reviews, review)
-	}
-
-	if err := rows.Err(); err != nil {
+	if err != nil {
 		reviewError(w, http.StatusInternalServerError, "อ่านข้อมูลรีวิวไม่สำเร็จ")
 		return
+	}
+
+	reviews := make([]ReviewResponse, 0, len(results))
+
+	for _, review := range results {
+		reviews = append(reviews, ReviewResponse{
+			ID:        review.ID,
+			UserID:    review.UserID,
+			Username:  review.Username,
+			GameID:    review.GameID,
+			Content:   review.Content,
+			Rating:    review.Rating,
+			Status:    review.Status,
+			CreatedAt: review.CreatedAt,
+			UpdatedAt: review.UpdatedAt,
+		})
 	}
 
 	reviewJSON(w, http.StatusOK, map[string]interface{}{
@@ -249,48 +211,42 @@ func (h *ReviewHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.DB.Begin()
-	if err != nil {
+	gameID, err := store.UpdateReview(
+		r.Context(),
+		h.DB,
+		reviewID,
+		claims.UserID,
+		content,
+		req.Rating,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		reviewError(w, http.StatusNotFound, "ไม่พบรีวิวของคุณ")
+		return
+	}
+
+	if store.IsReviewStage(err, "begin") {
 		reviewError(w, http.StatusInternalServerError, "เริ่มแก้ไขข้อมูลไม่สำเร็จ")
 		return
 	}
-	defer tx.Rollback()
 
-	var gameID int64
+	if store.IsReviewStage(err, "update") {
+		reviewError(w, http.StatusInternalServerError, "แก้ไขรีวิวไม่สำเร็จ")
+		return
+	}
 
-	err = tx.QueryRow(`
-		UPDATE game_reviews
-		SET content = $1, updated_at = NOW()
-		WHERE id = $2 AND user_id = $3
-		RETURNING game_id
-	`, content, reviewID, claims.UserID).Scan(&gameID)
+	if store.IsReviewStage(err, "rating") {
+		reviewError(w, http.StatusInternalServerError, "แก้ไขคะแนนไม่สำเร็จ")
+		return
+	}
 
-	if err == sql.ErrNoRows {
-		reviewError(w, http.StatusNotFound, "ไม่พบรีวิวของคุณ")
+	if store.IsReviewStage(err, "commit") {
+		reviewError(w, http.StatusInternalServerError, "บันทึกการแก้ไขไม่สำเร็จ")
 		return
 	}
 
 	if err != nil {
 		reviewError(w, http.StatusInternalServerError, "แก้ไขรีวิวไม่สำเร็จ")
-		return
-	}
-
-	_, err = tx.Exec(`
-		INSERT INTO game_ratings (user_id, game_id, rating)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, game_id)
-		DO UPDATE SET
-			rating = EXCLUDED.rating,
-			updated_at = NOW()
-	`, claims.UserID, gameID, req.Rating)
-
-	if err != nil {
-		reviewError(w, http.StatusInternalServerError, "แก้ไขคะแนนไม่สำเร็จ")
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		reviewError(w, http.StatusInternalServerError, "บันทึกการแก้ไขไม่สำเร็จ")
 		return
 	}
 
@@ -314,43 +270,40 @@ func (h *ReviewHandler) DeleteReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.DB.Begin()
-	if err != nil {
+	err = store.DeleteReview(
+		r.Context(),
+		h.DB,
+		reviewID,
+		claims.UserID,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		reviewError(w, http.StatusNotFound, "ไม่พบรีวิวของคุณ")
+		return
+	}
+
+	if store.IsReviewStage(err, "begin") {
 		reviewError(w, http.StatusInternalServerError, "เริ่มลบข้อมูลไม่สำเร็จ")
 		return
 	}
-	defer tx.Rollback()
 
-	var gameID int64
+	if store.IsReviewStage(err, "delete") {
+		reviewError(w, http.StatusInternalServerError, "ลบรีวิวไม่สำเร็จ")
+		return
+	}
 
-	err = tx.QueryRow(`
-		DELETE FROM game_reviews
-		WHERE id = $1 AND user_id = $2
-		RETURNING game_id
-	`, reviewID, claims.UserID).Scan(&gameID)
+	if store.IsReviewStage(err, "rating") {
+		reviewError(w, http.StatusInternalServerError, "ลบคะแนนไม่สำเร็จ")
+		return
+	}
 
-	if err == sql.ErrNoRows {
-		reviewError(w, http.StatusNotFound, "ไม่พบรีวิวของคุณ")
+	if store.IsReviewStage(err, "commit") {
+		reviewError(w, http.StatusInternalServerError, "บันทึกการลบไม่สำเร็จ")
 		return
 	}
 
 	if err != nil {
 		reviewError(w, http.StatusInternalServerError, "ลบรีวิวไม่สำเร็จ")
-		return
-	}
-
-	_, err = tx.Exec(`
-		DELETE FROM game_ratings
-		WHERE user_id = $1 AND game_id = $2
-	`, claims.UserID, gameID)
-
-	if err != nil {
-		reviewError(w, http.StatusInternalServerError, "ลบคะแนนไม่สำเร็จ")
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		reviewError(w, http.StatusInternalServerError, "บันทึกการลบไม่สำเร็จ")
 		return
 	}
 
